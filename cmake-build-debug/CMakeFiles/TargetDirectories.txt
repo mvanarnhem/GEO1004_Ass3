@@ -1,0 +1,3 @@
+/mnt/c/Users/Noah Alting/Documents/TUDelft/Geomatics/GEO1004_3DM/GEO1004_Ass3/cmake-build-debug/CMakeFiles/src.dir
+/mnt/c/Users/Noah Alting/Documents/TUDelft/Geomatics/GEO1004_3DM/GEO1004_Ass3/cmake-build-debug/CMakeFiles/edit_cache.dir
+/mnt/c/Users/Noah Alting/Documents/TUDelft/Geomatics/GEO1004_3DM/GEO1004_Ass3/cmake-build-debug/CMakeFiles/rebuild_cache.dir
