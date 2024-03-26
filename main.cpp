@@ -5,10 +5,8 @@
 #include <CGAL/linear_least_squares_fitting_3.h>
 #include <CGAL/Constrained_triangulation_2.h>
 #include <CGAL/Plane_3.h>
-#include "../include/json.hpp"
 #include <cstdlib>
 #include <CGAL/Cartesian.h>
-std::cout << "WAJOW" << std::endl;
 #include <CGAL/Polygon_2.h>
 
 typedef CGAL::Cartesian<double>     K;
@@ -19,5 +17,6 @@ typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
 typedef Kernel::Plane_3                      Plane;
 typedef Kernel::Point_3                      Point_3;
 
-std::cout<< "hello world" << std::endl;
-std::cout<< "hello again" << std::endl;
+int main() {
+    return 0;
+}
