@@ -17,3 +17,5 @@ typedef CGAL::Polygon_2<K>          Polygon;
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
 typedef Kernel::Plane_3                      Plane;
 typedef Kernel::Point_3                      Point_3;
+
+std::cout<< "hello world" << std::endl;
