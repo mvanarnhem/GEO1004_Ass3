@@ -8,6 +8,7 @@
 #include "../include/json.hpp"
 #include <cstdlib>
 #include <CGAL/Cartesian.h>
+std::cout << "WAJOW" << std::endl;
 #include <CGAL/Polygon_2.h>
 
 typedef CGAL::Cartesian<double>     K;
