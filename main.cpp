@@ -72,7 +72,7 @@ Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
 Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y,
                                                          unsigned int &z, double &voxel_size, Point_3 origin);
 void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, bool visualize_walls);
-
+void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid);
 
 
 int main() {
@@ -89,43 +89,7 @@ int main() {
     VoxelGrid my_building_grid(extent["x_range_VoxelGrid"], extent["y_range_VoxelGrid"], extent["z_range_VoxelGrid"]);
 
     generateOBJ(my_building_grid, "output_all_points.obj", origin, voxel_size, false);
-
-    std::cout << "Origin: " << origin.x() << ", " << origin.y() << ", " << origin.z() << ")" << std::endl;
-
-    for (const auto& entry : objects) {
-        const Object &obj = entry.second;
-
-        for (const auto &triangle: obj.shells) {
-            Bbox_3 triangle_bbox = triangle.bbox();
-
-            Point_3 min_corner = Point_3(triangle_bbox.xmin(), triangle_bbox.ymin(), triangle_bbox.zmin());
-            Point_3 max_corner = Point_3(triangle_bbox.xmax(), triangle_bbox.ymax(), triangle_bbox.zmax());
-
-            unsigned int x_min, y_min, z_min;
-            unsigned int x_max, y_max, z_max;
-
-            translate_RealWorldCoordinates_to_VoxelGridVoxel(min_corner, voxel_size, origin, x_min, y_min, z_min);
-            translate_RealWorldCoordinates_to_VoxelGridVoxel(max_corner, voxel_size, origin, x_max, y_max, z_max);
-
-            // loop over voxels within bbox of triangle
-            for (unsigned int i = x_min; i <= x_max; i++) {
-                for (unsigned int j = y_min; j <= y_max; j++) {
-                    for (unsigned int k = z_min; k <= z_max; k++) {
-                        //get bbox of the voxel
-                        Bbox_3 voxel_bbox = get_bbox_of_voxel(i, j, k, voxel_size, origin);
-                        // Check intersection
-                        bool intersects = CGAL::do_intersect(voxel_bbox, triangle);
-
-
-                        if (intersects) { // there is a triangle in this voxel, set voxel value to 1
-                            my_building_grid(i,j,k) = 1;
-//                            std::cout << "The triangle and the bounding box intersect." << std::endl;
-                        }
-                    }
-                }
-            }
-        }
-    }
+    intersection(objects, voxel_size, origin, my_building_grid);
     generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, false);
     generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, true);
 
@@ -283,4 +247,38 @@ void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 or
     }
 
     objFile.close();
+}
+
+void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid){
+    for (const auto& entry : objects) {
+        const Object &obj = entry.second;
+
+        for (const auto &triangle: obj.shells) {
+            Bbox_3 triangle_bbox = triangle.bbox();
+
+            Point_3 min_corner = Point_3(triangle_bbox.xmin(), triangle_bbox.ymin(), triangle_bbox.zmin());
+            Point_3 max_corner = Point_3(triangle_bbox.xmax(), triangle_bbox.ymax(), triangle_bbox.zmax());
+
+            unsigned int x_min, y_min, z_min;
+            unsigned int x_max, y_max, z_max;
+
+            translate_RealWorldCoordinates_to_VoxelGridVoxel(min_corner, voxel_size, origin, x_min, y_min, z_min);
+            translate_RealWorldCoordinates_to_VoxelGridVoxel(max_corner, voxel_size, origin, x_max, y_max, z_max);
+
+            // loop over voxels within bbox of triangle
+            for (unsigned int i = x_min; i <= x_max; i++) {
+                for (unsigned int j = y_min; j <= y_max; j++) {
+                    for (unsigned int k = z_min; k <= z_max; k++) {
+                        //get bbox of the voxel
+                        Bbox_3 voxel_bbox = get_bbox_of_voxel(i, j, k, voxel_size, origin);
+                        // Check intersection
+                        bool intersects = CGAL::do_intersect(voxel_bbox, triangle);
+                        if (intersects) { // there is a triangle in this voxel, set voxel value to 1
+                            my_building_grid(i,j,k) = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
