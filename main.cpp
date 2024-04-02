@@ -60,21 +60,20 @@ struct VoxelGrid {
         assert(z >= 0 && z < max_z);
         return voxels[x + y*max_x + z*max_x*max_y];
     }
+
 };
 
 void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &vertices, const std::string &input_file);
 void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &origin);
 void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_size, Point_3 origin,
                                                     unsigned int &x, unsigned int &y, unsigned int &z);
-Iso_cuboid_3 get_iso_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
-                                   double &voxel_size, Point_3 origin);
-
 Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
                          double &voxel_size, Point_3 origin);
-void createColorsMTL(const std::string& mtlFilePath);
 Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y,
                                                          unsigned int &z, double &voxel_size, Point_3 origin);
 void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, bool visualize_walls);
+
+
 
 int main() {
     const std::string input_file = "../data/output_small_house.obj";
@@ -86,7 +85,12 @@ int main() {
     double voxel_size = 0.5;
     Point_3 origin; // This is the point which is located left below in the voxelgrid. It contains the real coordinates
     get_extents(vertices, extent, voxel_size, origin);
+
     VoxelGrid my_building_grid(extent["x_range_VoxelGrid"], extent["y_range_VoxelGrid"], extent["z_range_VoxelGrid"]);
+
+    generateOBJ(my_building_grid, "output_all_points.obj", origin, voxel_size, false);
+
+    std::cout << "Origin: " << origin.x() << ", " << origin.y() << ", " << origin.z() << ")" << std::endl;
 
     for (const auto& entry : objects) {
         const Object &obj = entry.second;
@@ -94,15 +98,12 @@ int main() {
         for (const auto &triangle: obj.shells) {
             Bbox_3 triangle_bbox = triangle.bbox();
 
-//            std::cout << "Bounding box: ("
-//                      << triangle_bbox.xmin() << ", " << triangle_bbox.ymin() << ", " << triangle_bbox.zmin() << ") to ("
-//                      << triangle_bbox.xmax() << ", " << triangle_bbox.ymax() << ", " << triangle_bbox.zmax() << ")"
-//                      <<std::endl;
             Point_3 min_corner = Point_3(triangle_bbox.xmin(), triangle_bbox.ymin(), triangle_bbox.zmin());
             Point_3 max_corner = Point_3(triangle_bbox.xmax(), triangle_bbox.ymax(), triangle_bbox.zmax());
 
             unsigned int x_min, y_min, z_min;
             unsigned int x_max, y_max, z_max;
+
             translate_RealWorldCoordinates_to_VoxelGridVoxel(min_corner, voxel_size, origin, x_min, y_min, z_min);
             translate_RealWorldCoordinates_to_VoxelGridVoxel(max_corner, voxel_size, origin, x_max, y_max, z_max);
 
@@ -111,17 +112,14 @@ int main() {
                 for (unsigned int j = y_min; j <= y_max; j++) {
                     for (unsigned int k = z_min; k <= z_max; k++) {
                         //get bbox of the voxel
-                        Iso_cuboid_3 voxel_bbox = get_iso_bbox_of_voxel(i, j, k, voxel_size, origin);
-
+                        Bbox_3 voxel_bbox = get_bbox_of_voxel(i, j, k, voxel_size, origin);
                         // Check intersection
-                        bool intersects = CGAL::do_intersect(triangle, voxel_bbox);
+                        bool intersects = CGAL::do_intersect(voxel_bbox, triangle);
 
 
                         if (intersects) { // there is a triangle in this voxel, set voxel value to 1
                             my_building_grid(i,j,k) = 1;
 //                            std::cout << "The triangle and the bounding box intersect." << std::endl;
-                        } else {
-                            my_building_grid(i, j, k) = 0;
                         }
                     }
                 }
@@ -130,32 +128,6 @@ int main() {
     }
     generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, false);
     generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, true);
-
-//    BELOW IS JUST TO PRINT
-    for (const auto& entry : objects) {
-        if (entry.first < 10) {
-            std::cout << "Object ID: " << entry.first << std::endl;
-            const Object &obj = entry.second;
-            std::cout << "Name: " << obj.name << std::endl;
-            std::cout << "Material Type: " << obj.material_type << std::endl;
-            std::cout << "Shells:" << std::endl;
-            for (const auto &shell: obj.shells) {
-                std::cout << "-------New Triangle------" << std::endl;
-                std::cout << "\t Modelcoordinates " << "Vertex 1: " << shell.vertex(1) << ", Vertex 2: " << shell.vertex(2)
-                          << ", Vertex 3: " << shell.vertex(3) << std::endl;
-                std::cout << "\t Voxelgrid integers (xrows, yrows, zrows) ";
-                unsigned int x1, y1, z1;
-                translate_RealWorldCoordinates_to_VoxelGridVoxel(shell.vertex(1), voxel_size, origin, x1, y1,z1);
-                std::cout << "Vertex 1: (" << x1 << ", " << y1 << ", " << z1 << "), ";
-                unsigned int x2, y2, z2;
-                translate_RealWorldCoordinates_to_VoxelGridVoxel(shell.vertex(2), voxel_size, origin, x2, y2, z2);
-                std::cout << "Vertex 2: (" << x2 << ", " << y2 << ", " << z2 << "), ";
-                unsigned int x3, y3, z3;
-                translate_RealWorldCoordinates_to_VoxelGridVoxel(shell.vertex(3), voxel_size, origin, x3, y3,z3);
-                std::cout << "Vertex 3: (" << x3 << ", " << y3 << ", " << z3 << ")" << std::endl;
-            }
-        }
-    }
 
     return 0;
 }
@@ -204,13 +176,14 @@ void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &ve
                     std::cout << "The input face contains more than 3 vertices." << std::endl;
                 }
                 else{
-                    current_object.shells.emplace_back(Triangle(vertices[v1], vertices[v2], vertices[v3]));
+                    current_object.shells.emplace_back(Triangle(vertices[v1-1], vertices[v2-1], vertices[v3-1]));
                 }
             }
             else if(line_type == "usemtl"){
                 line_stream >> current_object.material_type;
             }
         }
+        objects[index_object] = current_object;
     }
 }
 
@@ -262,38 +235,20 @@ Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsign
 
 Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
                                                        double &voxel_size, Point_3 origin){
-    double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
-    double centroid_y_coordinate = origin.y() + (y + 0.5) * voxel_size;
-    double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
-    double x_min = centroid_x_coordinate - voxel_size/2;
-    double y_min = centroid_y_coordinate - voxel_size/2;
-    double z_min = centroid_z_coordinate - voxel_size/2;
-    double x_max = centroid_x_coordinate + voxel_size/2;
-    double y_max = centroid_y_coordinate + voxel_size/2;
-    double z_max = centroid_z_coordinate + voxel_size/2;
+    double x_min = origin.x() + x * voxel_size;
+    double y_min = origin.y() + y * voxel_size;
+    double z_min = origin.z() + z * voxel_size;
+    double x_max = origin.x() + (x+1) * voxel_size;
+    double y_max = origin.y() + (y+1) * voxel_size;
+    double z_max = origin.z() + (z+1) * voxel_size;
     return Bbox_3(x_min, y_min, z_min, x_max, y_max, z_max);
 }
 
-Iso_cuboid_3 get_iso_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
-                                    double &voxel_size, Point_3 origin){
-    double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
-    double centroid_y_coordinate = origin.y() + (y + 0.5) * voxel_size;
-    double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
-    double x_min = centroid_x_coordinate - voxel_size/2;
-    double y_min = centroid_y_coordinate - voxel_size/2;
-    double z_min = centroid_z_coordinate - voxel_size/2;
-    double x_max = centroid_x_coordinate + voxel_size/2;
-    double y_max = centroid_y_coordinate + voxel_size/2;
-    double z_max = centroid_z_coordinate + voxel_size/2;
-    return Iso_cuboid_3 (x_min, y_min, z_min, x_max, y_max, z_max);
-}
-
-
 void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_size, Point_3 origin,
                                                     unsigned int &x, unsigned int &y, unsigned int &z){
-    x = static_cast<int>(std::floor((pt.x() - origin.x()) / voxel_size));
-    y = static_cast<int>(std::floor((pt.y() - origin.y()) / voxel_size));
-    z = static_cast<int>(std::floor((pt.z() - origin.z()) / voxel_size));
+    x = static_cast<unsigned int>(std::floor((pt.x() - origin.x()) / voxel_size));
+    y = static_cast<unsigned int>(std::floor((pt.y() - origin.y()) / voxel_size));
+    z = static_cast<unsigned int>(std::floor((pt.z() - origin.z()) / voxel_size));
 }
 
 void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, bool visualize_walls) {
@@ -314,10 +269,9 @@ void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 or
     // Define material library
     objFile << "mtllib colors.mtl\n\n";
 
-    // Iterate over voxels
-    for (unsigned int x = 0; x <= voxelgrid.max_x; ++x) {
-        for (unsigned int y = 0; y <= voxelgrid.max_y; ++y) {
-            for (unsigned int z = 0; z <= voxelgrid.max_z; ++z) {
+    for (unsigned int x = 0; x < voxelgrid.max_x; ++x) {
+        for (unsigned int y = 0; y < voxelgrid.max_y; ++y) {
+            for (unsigned int z = 0; z < voxelgrid.max_z; ++z) {
                 // Check if voxel value is 1
                 if (voxelgrid(x, y, z) == value) {
                     Point_3 pt = translate_VoxelGridVoxel_to_RealWorldCoordinates(x, y, z, voxel_size, origin);
