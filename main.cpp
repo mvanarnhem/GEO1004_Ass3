@@ -16,12 +16,17 @@
 #include <typeinfo>
 #include <limits>
 #include <cmath>
+#include <CGAL/intersections.h>
+#include <CGAL/Bbox_3.h>
 
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
-typedef Kernel::Plane_3                      Plane;
-typedef Kernel::Point_3                      Point_3;
-typedef Kernel::Triangle_3                   Triangle;
+typedef Kernel::Plane_3                                     Plane;
+typedef Kernel::Point_3                                     Point_3;
+typedef Kernel::Triangle_3                                  Triangle;
+typedef CGAL::Bbox_3                                        Bbox_3;
+typedef Kernel::Iso_cuboid_3                                Iso_cuboid_3;
+
 
 struct Object {
     std::string name;
@@ -58,11 +63,18 @@ struct VoxelGrid {
 };
 
 void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &vertices, const std::string &input_file);
-void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &model_coordinates);
-Point_3 translate_from_XYZVoxelgrid_to_CentroidInModel(unsigned int &x, unsigned int &y,
-                                                       unsigned int &z, double &voxel_size, Point_3 model_coordinates);
-void translate_from_CentroidInModel_to_XYZVoxelgrid(Point_3 pt, double &voxel_size, Point_3 model_coordinates, unsigned int &x, unsigned int &y,
-                                                                unsigned int &z);
+void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &origin);
+void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_size, Point_3 origin,
+                                                    unsigned int &x, unsigned int &y, unsigned int &z);
+Iso_cuboid_3 get_iso_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
+                                   double &voxel_size, Point_3 origin);
+
+Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
+                         double &voxel_size, Point_3 origin);
+void createColorsMTL(const std::string& mtlFilePath);
+Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y,
+                                                         unsigned int &z, double &voxel_size, Point_3 origin);
+void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, bool visualize_walls);
 
 int main() {
     const std::string input_file = "../data/output_small_house.obj";
@@ -72,9 +84,52 @@ int main() {
 
     std::map<std::string, int> extent;
     double voxel_size = 0.5;
-    Point_3 model_coordinates; // This is the point which is located left below in the voxelgrid. It contains the real coordinates
-    get_extents(vertices, extent, voxel_size, model_coordinates);
+    Point_3 origin; // This is the point which is located left below in the voxelgrid. It contains the real coordinates
+    get_extents(vertices, extent, voxel_size, origin);
     VoxelGrid my_building_grid(extent["x_range_VoxelGrid"], extent["y_range_VoxelGrid"], extent["z_range_VoxelGrid"]);
+
+    for (const auto& entry : objects) {
+        const Object &obj = entry.second;
+
+        for (const auto &triangle: obj.shells) {
+            Bbox_3 triangle_bbox = triangle.bbox();
+
+//            std::cout << "Bounding box: ("
+//                      << triangle_bbox.xmin() << ", " << triangle_bbox.ymin() << ", " << triangle_bbox.zmin() << ") to ("
+//                      << triangle_bbox.xmax() << ", " << triangle_bbox.ymax() << ", " << triangle_bbox.zmax() << ")"
+//                      <<std::endl;
+            Point_3 min_corner = Point_3(triangle_bbox.xmin(), triangle_bbox.ymin(), triangle_bbox.zmin());
+            Point_3 max_corner = Point_3(triangle_bbox.xmax(), triangle_bbox.ymax(), triangle_bbox.zmax());
+
+            unsigned int x_min, y_min, z_min;
+            unsigned int x_max, y_max, z_max;
+            translate_RealWorldCoordinates_to_VoxelGridVoxel(min_corner, voxel_size, origin, x_min, y_min, z_min);
+            translate_RealWorldCoordinates_to_VoxelGridVoxel(max_corner, voxel_size, origin, x_max, y_max, z_max);
+
+            // loop over voxels within bbox of triangle
+            for (unsigned int i = x_min; i <= x_max; i++) {
+                for (unsigned int j = y_min; j <= y_max; j++) {
+                    for (unsigned int k = z_min; k <= z_max; k++) {
+                        //get bbox of the voxel
+                        Iso_cuboid_3 voxel_bbox = get_iso_bbox_of_voxel(i, j, k, voxel_size, origin);
+
+                        // Check intersection
+                        bool intersects = CGAL::do_intersect(triangle, voxel_bbox);
+
+
+                        if (intersects) { // there is a triangle in this voxel, set voxel value to 1
+                            my_building_grid(i,j,k) = 1;
+//                            std::cout << "The triangle and the bounding box intersect." << std::endl;
+                        } else {
+                            my_building_grid(i, j, k) = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, false);
+    generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, true);
 
 //    BELOW IS JUST TO PRINT
     for (const auto& entry : objects) {
@@ -90,13 +145,13 @@ int main() {
                           << ", Vertex 3: " << shell.vertex(3) << std::endl;
                 std::cout << "\t Voxelgrid integers (xrows, yrows, zrows) ";
                 unsigned int x1, y1, z1;
-                translate_from_CentroidInModel_to_XYZVoxelgrid(shell.vertex(1), voxel_size, model_coordinates, x1, y1,z1);
+                translate_RealWorldCoordinates_to_VoxelGridVoxel(shell.vertex(1), voxel_size, origin, x1, y1,z1);
                 std::cout << "Vertex 1: (" << x1 << ", " << y1 << ", " << z1 << "), ";
                 unsigned int x2, y2, z2;
-                translate_from_CentroidInModel_to_XYZVoxelgrid(shell.vertex(2), voxel_size, model_coordinates, x2, y2, z2);
+                translate_RealWorldCoordinates_to_VoxelGridVoxel(shell.vertex(2), voxel_size, origin, x2, y2, z2);
                 std::cout << "Vertex 2: (" << x2 << ", " << y2 << ", " << z2 << "), ";
                 unsigned int x3, y3, z3;
-                translate_from_CentroidInModel_to_XYZVoxelgrid(shell.vertex(3), voxel_size, model_coordinates, x3, y3,z3);
+                translate_RealWorldCoordinates_to_VoxelGridVoxel(shell.vertex(3), voxel_size, origin, x3, y3,z3);
                 std::cout << "Vertex 3: (" << x3 << ", " << y3 << ", " << z3 << ")" << std::endl;
             }
         }
@@ -159,7 +214,7 @@ void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &ve
     }
 }
 
-void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &model_coordinates){
+void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &origin){
     double min_x = std::numeric_limits<double>::max();
     double max_x = std::numeric_limits<double>::lowest();
     double min_y = std::numeric_limits<double>::max();
@@ -194,20 +249,84 @@ void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &ext
     x = min_x - 0.5 * (x_range_VoxelGrid * voxel_size - (max_x - min_x));
     y = min_y - 0.5 * (y_range_VoxelGrid * voxel_size - (max_y - min_y));
     z = min_z - 0.5 * (z_range_VoxelGrid * voxel_size - (max_z - min_z));
-    model_coordinates = Point_3(x, y, z);
+    origin = Point_3(x, y, z);
 }
 
-Point_3 translate_from_XYZVoxelgrid_to_CentroidInModel(unsigned int &x, unsigned int &y, unsigned int &z,
-                                                       double &voxel_size, Point_3 model_coordinates){
-    double centroid_x_coordinate = model_coordinates.x() + (x + 0.5) * voxel_size;
-    double centroid_y_coordinate = model_coordinates.y() + (y + 0.5) * voxel_size;
-    double centroid_z_coordinate = model_coordinates.z() + (z + 0.5) * voxel_size;
+Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y, unsigned int &z,
+                                                       double &voxel_size, Point_3 origin){
+    double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
+    double centroid_y_coordinate = origin.y() + (y + 0.5) * voxel_size;
+    double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
     return Point_3(centroid_x_coordinate, centroid_y_coordinate, centroid_z_coordinate);
 }
 
-void translate_from_CentroidInModel_to_XYZVoxelgrid(Point_3 pt, double &voxel_size, Point_3 model_coordinates, unsigned int &x, unsigned int &y,
-                                                    unsigned int &z){
-    x = static_cast<int>(std::floor((pt.x() - model_coordinates.x()) / voxel_size));
-    y = static_cast<int>(std::floor((pt.y() - model_coordinates.y()) / voxel_size));
-    z = static_cast<int>(std::floor((pt.z() - model_coordinates.z()) / voxel_size));
+Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
+                                                       double &voxel_size, Point_3 origin){
+    double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
+    double centroid_y_coordinate = origin.y() + (y + 0.5) * voxel_size;
+    double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
+    double x_min = centroid_x_coordinate - voxel_size/2;
+    double y_min = centroid_y_coordinate - voxel_size/2;
+    double z_min = centroid_z_coordinate - voxel_size/2;
+    double x_max = centroid_x_coordinate + voxel_size/2;
+    double y_max = centroid_y_coordinate + voxel_size/2;
+    double z_max = centroid_z_coordinate + voxel_size/2;
+    return Bbox_3(x_min, y_min, z_min, x_max, y_max, z_max);
+}
+
+Iso_cuboid_3 get_iso_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
+                                    double &voxel_size, Point_3 origin){
+    double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
+    double centroid_y_coordinate = origin.y() + (y + 0.5) * voxel_size;
+    double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
+    double x_min = centroid_x_coordinate - voxel_size/2;
+    double y_min = centroid_y_coordinate - voxel_size/2;
+    double z_min = centroid_z_coordinate - voxel_size/2;
+    double x_max = centroid_x_coordinate + voxel_size/2;
+    double y_max = centroid_y_coordinate + voxel_size/2;
+    double z_max = centroid_z_coordinate + voxel_size/2;
+    return Iso_cuboid_3 (x_min, y_min, z_min, x_max, y_max, z_max);
+}
+
+
+void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_size, Point_3 origin,
+                                                    unsigned int &x, unsigned int &y, unsigned int &z){
+    x = static_cast<int>(std::floor((pt.x() - origin.x()) / voxel_size));
+    y = static_cast<int>(std::floor((pt.y() - origin.y()) / voxel_size));
+    z = static_cast<int>(std::floor((pt.z() - origin.z()) / voxel_size));
+}
+
+void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, bool visualize_walls) {
+    std::ofstream objFile(objFilePath);
+    int value;
+    if (visualize_walls){
+        value = 1;
+    }
+    else if (not visualize_walls){
+        value = 0;
+    }
+
+    if (!objFile.is_open()) {
+        std::cerr << "Error: Unable to open file: " << objFilePath << std::endl;
+        return;
+    }
+
+    // Define material library
+    objFile << "mtllib colors.mtl\n\n";
+
+    // Iterate over voxels
+    for (unsigned int x = 0; x <= voxelgrid.max_x; ++x) {
+        for (unsigned int y = 0; y <= voxelgrid.max_y; ++y) {
+            for (unsigned int z = 0; z <= voxelgrid.max_z; ++z) {
+                // Check if voxel value is 1
+                if (voxelgrid(x, y, z) == value) {
+                    Point_3 pt = translate_VoxelGridVoxel_to_RealWorldCoordinates(x, y, z, voxel_size, origin);
+                    // Write vertex coordinates
+                    objFile << "v " << pt.x() << " " << pt.y() << " " << pt.z() << "\n";
+                }
+            }
+        }
+    }
+
+    objFile.close();
 }
