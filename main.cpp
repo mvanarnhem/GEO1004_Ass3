@@ -84,57 +84,6 @@ int main() {
 
     intersection(objects, voxel_size, origin, my_building_grid);
 
-//    // initialize the to_visit list of voxel indices we need to visit
-//    std::vector<int> to_visit;
-//    to_visit.emplace_back(0); // start at the first voxel
-//    my_building_grid(0, 0, 0) = 2; // set it's value to 2 manually
-//
-//    auto x_size = my_building_grid.max_x;
-//    auto y_size = my_building_grid.max_y;
-//    auto z_size = my_building_grid.max_z;
-//
-//
-//    while (! to_visit.empty()) { // as long as there are voxels to visit, keep iterating
-//        int current_voxel_id = to_visit.front();
-//
-//        // find x, y, z of the current voxel
-//        int x, y, z;
-//        x = current_voxel_id % x_size;
-//        y = (current_voxel_id / x_size) % y_size;
-//        z = current_voxel_id / (x_size * y_size);
-//
-//        // loop over every neighboring voxel
-//        for (int dz = -1; dz <= 1; ++dz) {
-//            for (int dy = -1; dy <= 1; ++dy) {
-//                for (int dx = -1; dx <= 1; ++dx) {
-//                    // Skip the voxel itself
-//                    if (dx == 0 && dy == 0 && dz == 0)
-//                        continue;
-//
-//                    // Calculate neighbor coordinates
-//                    int nx = x + dx;
-//                    int ny = y + dy;
-//                    int nz = z + dz;
-//                    int neighbor_id = nx + ny * x_size + nz * x_size * y_size;
-//
-//                    // decide what to do with the neighbor
-//                    if (nx >= 0 && nx < x_size && ny >= 0 && ny < y_size && nz >= 0 && nz < z_size) {
-//                        // if neighbor is within bounds of total voxel grid
-//                        if (my_building_grid(nx, ny, nz) == 0) { // if neighbor voxel == 0
-//                            my_building_grid(nx, ny, nz) = 2; // set the neighbor to 2
-//                            to_visit.push_back(neighbor_id); // add it to the to_visit list
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//
-//        std::cout << "to_visit length = " << to_visit.size() << std::endl;
-//
-//        to_visit.erase(to_visit.begin());
-//
-//    }
-    
     label_region(my_building_grid, 2, 0);
 
     generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
