@@ -6,14 +6,10 @@
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/linear_least_squares_fitting_3.h>
 #include <CGAL/Constrained_triangulation_2.h>
-#include <CGAL/Plane_3.h>
 #include <cstdlib>
-#include <CGAL/Cartesian.h>
-#include <CGAL/Simple_cartesian.h>
 #include <CGAL/Constrained_Delaunay_triangulation_2.h>
 #include <CGAL/Triangulation_vertex_base_2.h>
 #include <CGAL/Triangulation_face_base_with_info_2.h>
-#include <typeinfo>
 #include <limits>
 #include <cmath>
 #include <CGAL/intersections.h>
@@ -21,11 +17,9 @@
 
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
-typedef Kernel::Plane_3                                     Plane;
 typedef Kernel::Point_3                                     Point_3;
 typedef Kernel::Triangle_3                                  Triangle;
 typedef CGAL::Bbox_3                                        Bbox_3;
-typedef Kernel::Iso_cuboid_3                                Iso_cuboid_3;
 
 
 struct Object {
@@ -73,7 +67,7 @@ Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsign
                                                          unsigned int &z, double &voxel_size, Point_3 origin);
 void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value);
 void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid);
-
+void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index);
 
 int main() {
     const std::string input_file = "../data/output_small_house.obj";
@@ -90,26 +84,95 @@ int main() {
 
     intersection(objects, voxel_size, origin, my_building_grid);
 
+//    // initialize the to_visit list of voxel indices we need to visit
+//    std::vector<int> to_visit;
+//    to_visit.emplace_back(0); // start at the first voxel
+//    my_building_grid(0, 0, 0) = 2; // set it's value to 2 manually
+//
+//    auto x_size = my_building_grid.max_x;
+//    auto y_size = my_building_grid.max_y;
+//    auto z_size = my_building_grid.max_z;
+//
+//
+//    while (! to_visit.empty()) { // as long as there are voxels to visit, keep iterating
+//        int current_voxel_id = to_visit.front();
+//
+//        // find x, y, z of the current voxel
+//        int x, y, z;
+//        x = current_voxel_id % x_size;
+//        y = (current_voxel_id / x_size) % y_size;
+//        z = current_voxel_id / (x_size * y_size);
+//
+//        // loop over every neighboring voxel
+//        for (int dz = -1; dz <= 1; ++dz) {
+//            for (int dy = -1; dy <= 1; ++dy) {
+//                for (int dx = -1; dx <= 1; ++dx) {
+//                    // Skip the voxel itself
+//                    if (dx == 0 && dy == 0 && dz == 0)
+//                        continue;
+//
+//                    // Calculate neighbor coordinates
+//                    int nx = x + dx;
+//                    int ny = y + dy;
+//                    int nz = z + dz;
+//                    int neighbor_id = nx + ny * x_size + nz * x_size * y_size;
+//
+//                    // decide what to do with the neighbor
+//                    if (nx >= 0 && nx < x_size && ny >= 0 && ny < y_size && nz >= 0 && nz < z_size) {
+//                        // if neighbor is within bounds of total voxel grid
+//                        if (my_building_grid(nx, ny, nz) == 0) { // if neighbor voxel == 0
+//                            my_building_grid(nx, ny, nz) = 2; // set the neighbor to 2
+//                            to_visit.push_back(neighbor_id); // add it to the to_visit list
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//
+//        std::cout << "to_visit length = " << to_visit.size() << std::endl;
+//
+//        to_visit.erase(to_visit.begin());
+//
+//    }
+    
+    label_region(my_building_grid, 2, 0);
+
+    generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
+    generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, 1);
+    generateOBJ(my_building_grid, "output_only_2.obj", origin, voxel_size, 2);
+    return 0;
+}
+
+void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index) {
     // initialize the to_visit list of voxel indices we need to visit
     std::vector<int> to_visit;
-    to_visit.emplace_back(0); // start at the first voxel
-    my_building_grid(0, 0, 0) = 2; // set it's value to 2 manually
 
-    auto x_size = my_building_grid.max_x;
-    auto y_size = my_building_grid.max_y;
-    auto z_size = my_building_grid.max_z;
+    // define grid dimensions for further use
+    int grid_size_x = voxel_grid.max_x;
+    int grid_size_y = voxel_grid.max_y;
+    int grid_size_z = voxel_grid.max_z;
 
+    // extract coordinates of the starting index
+    int start_x = start_voxel_index % grid_size_x;
+    int start_y = (start_voxel_index / grid_size_x) % grid_size_y;
+    int start_z = start_voxel_index / (grid_size_x * grid_size_y);
 
-    while (! to_visit.empty()) { // as long as there are voxels to visit, keep iterating
+    std::cout << "\tGrowing region for label: " << label <<
+              "\tstarting at: " << "(" << start_x << ", " << start_y << ", " << start_z << ")" << std::endl;
+
+    to_visit.emplace_back(start_voxel_index); // place start voxel in to_visit
+    voxel_grid(start_x, start_y, start_z) = label; // set it's value to the label
+
+    // as long as there are voxels to visit, label their unlabelled neighbors and add them to to_visit
+    while (!to_visit.empty()) {
         int current_voxel_id = to_visit.front();
 
         // find x, y, z of the current voxel
-        int x, y, z;
-        x = current_voxel_id % x_size;
-        y = (current_voxel_id / x_size) % y_size;
-        z = current_voxel_id / (x_size * y_size);
+        int x = current_voxel_id % grid_size_x;
+        int y = (current_voxel_id / grid_size_x) % grid_size_y;
+        int z = current_voxel_id / (grid_size_x * grid_size_y);
 
-        // loop over every neighboring voxel
+        // loop over every neighboring voxel using 26-connectivity
         for (int dz = -1; dz <= 1; ++dz) {
             for (int dy = -1; dy <= 1; ++dy) {
                 for (int dx = -1; dx <= 1; ++dx) {
@@ -121,31 +184,27 @@ int main() {
                     int nx = x + dx;
                     int ny = y + dy;
                     int nz = z + dz;
-                    int neighbor_id = nx + ny * x_size + nz * x_size * y_size;
+                    int neighbor_id = nx + ny * grid_size_x + nz * grid_size_x * grid_size_y;
 
-                    // decide what to do with the neighbor
-                    if (nx >= 0 && nx < x_size && ny >= 0 && ny < y_size && nz >= 0 && nz < z_size) {
-                        // if neighbor is within bounds of total voxel grid
-                        if (my_building_grid(nx, ny, nz) == 0) { // if neighbor voxel == 0
-                            my_building_grid(nx, ny, nz) = 2; // set the neighbor to 2
-                            to_visit.push_back(neighbor_id); // add it to the to_visit list
-                            }
-                        }
+                    // if neighbor is witin grid bounds and is unlabelled
+                    if (0 <= nx && nx < grid_size_x &&
+                        0 <= ny && ny < grid_size_y &&
+                        0 <= nz && nz < grid_size_z &&
+                        voxel_grid(nx, ny, nz) == 0) {
+                        // set the neighbor to the label and add it to the to_visit list
+                        voxel_grid(nx, ny, nz) = label;
+                        to_visit.push_back(neighbor_id);
                     }
                 }
             }
-
-        std::cout << "to_visit length = " << to_visit.size() << std::endl;
-
-        to_visit.erase(to_visit.begin());
-
+        }
+    std::cout << "to_visit length = " << to_visit.size() << std::endl;
+    to_visit.erase(to_visit.begin());
     }
-
-    generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
-    generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, 1);
-    generateOBJ(my_building_grid, "output_only_2.obj", origin, voxel_size, 2);
-    return 0;
 }
+
+
+
 
 void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &vertices, const std::string &input_file){
     std::ifstream input_stream;
@@ -266,7 +325,7 @@ void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_
     z = static_cast<unsigned int>(std::floor((pt.z() - origin.z()) / voxel_size));
 }
 
-void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value) {
+void generateOBJ(VoxelGrid voxel_grid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value) {
     std::ofstream objFile(objFilePath);
 
     if (!objFile.is_open()) {
@@ -277,11 +336,11 @@ void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 or
     // Define material library
     objFile << "mtllib colors.mtl\n\n";
 
-    for (unsigned int x = 0; x < voxelgrid.max_x; ++x) {
-        for (unsigned int y = 0; y < voxelgrid.max_y; ++y) {
-            for (unsigned int z = 0; z < voxelgrid.max_z; ++z) {
+    for (unsigned int x = 0; x < voxel_grid.max_x; ++x) {
+        for (unsigned int y = 0; y < voxel_grid.max_y; ++y) {
+            for (unsigned int z = 0; z < voxel_grid.max_z; ++z) {
                 // Check if voxel value is 1
-                if (voxelgrid(x, y, z) == value) {
+                if (voxel_grid(x, y, z) == value) {
                     Point_3 pt = translate_VoxelGridVoxel_to_RealWorldCoordinates(x, y, z, voxel_size, origin);
                     // Write vertex coordinates
                     objFile << "v " << pt.x() << " " << pt.y() << " " << pt.z() << "\n";
