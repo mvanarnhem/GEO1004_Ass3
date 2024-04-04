@@ -14,6 +14,8 @@
 #include <cmath>
 #include <CGAL/intersections.h>
 #include <CGAL/Bbox_3.h>
+#include <set>
+
 
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
@@ -68,7 +70,8 @@ Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsign
 void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value);
 void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid);
 void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index);
-
+void label_all_regions(VoxelGrid &voxel_grid, unsigned int first_label);
+void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume);
 int main() {
     const std::string input_file = "../data/output_small_house.obj";
     std::map<int, Object> objects;
@@ -84,12 +87,59 @@ int main() {
 
     intersection(objects, voxel_size, origin, my_building_grid);
 
-    label_region(my_building_grid, 2, 0);
+    label_all_regions(my_building_grid, 2);
+
+    // fill fake rooms that are created between walls.
+    // unsure about the theshold_volume approach, and the problem only occurs at smaller voxels
+    // so for now we set the voxel_size back at 0.5 and not use the function at the moment
+    // fill_holes_in_wall(my_building_grid, voxel_size, 6.0);
 
     generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
     generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, 1);
     generateOBJ(my_building_grid, "output_only_2.obj", origin, voxel_size, 2);
+    generateOBJ(my_building_grid, "output_only_3.obj", origin, voxel_size, 3);
+    generateOBJ(my_building_grid, "output_only_4.obj", origin, voxel_size, 4);
+
     return 0;
+}
+
+void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume) {
+    std::map<unsigned int, int> region_size_map; // initiate a map to keep track of how many voxels per label
+    for (unsigned int i = 0; i < voxel_grid.voxels.size(); ++i) {
+        auto &voxel_value = voxel_grid.voxels[i];
+        region_size_map[voxel_value]++;
+    }
+    std::set<int> holes_to_fill;
+    for (const auto& pair : region_size_map){
+        double region_volume = pair.second * std::pow(voxel_size, 3);
+        if (region_volume < threshold_volume){
+            holes_to_fill.insert(pair.first);
+        }
+    }
+
+    for (unsigned int i = 0; i < voxel_grid.voxels.size(); ++i) {
+        auto &voxel_value = voxel_grid.voxels[i];
+
+        if (holes_to_fill.find(voxel_value) != holes_to_fill.end()){
+            // std::cout<< "overwriting voxel id=" << i << "\t" << voxel_value << "--> 1" << std::endl;
+            voxel_grid.voxels[i] = 1;
+        }
+    }
+}
+
+void label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label) {
+    std::cout << "Labelling spaces" << "-------------------" << std::endl;
+
+    unsigned int label_number = exterior_label;
+
+    for (unsigned int i = 0; i < voxel_grid.voxels.size(); ++i) {
+        auto &voxel_value = voxel_grid.voxels[i];
+        if (voxel_value == 0) {
+            label_region(voxel_grid, label_number, i);
+            ++label_number;
+        }
+    }
+    std::cout << "-----------------------------------" << std::endl;
 }
 
 void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index) {
@@ -106,11 +156,9 @@ void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_ind
     int start_y = (start_voxel_index / grid_size_x) % grid_size_y;
     int start_z = start_voxel_index / (grid_size_x * grid_size_y);
 
-    std::cout << "\tGrowing region for label: " << label <<
-              "\tstarting at: " << "(" << start_x << ", " << start_y << ", " << start_z << ")" << std::endl;
-
     to_visit.emplace_back(start_voxel_index); // place start voxel in to_visit
-    voxel_grid(start_x, start_y, start_z) = label; // set it's value to the label
+    voxel_grid(start_x, start_y, start_z) = label; // set it's value to this label
+    int voxels_labelled = 0; // keep track of how many voxels are added to this label
 
     // as long as there are voxels to visit, label their unlabelled neighbors and add them to to_visit
     while (!to_visit.empty()) {
@@ -147,12 +195,12 @@ void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_ind
                 }
             }
         }
-    std::cout << "to_visit length = " << to_visit.size() << std::endl;
     to_visit.erase(to_visit.begin());
+    ++voxels_labelled;
     }
+    std::cout << "\tlabel: " << label << "\tstarting at:\t" <<
+    "(" << start_x << ", " << start_y << ", " << start_z << ")" << "\t room_size= " << voxels_labelled << " voxels" << std::endl;
 }
-
-
 
 
 void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &vertices, const std::string &input_file){
@@ -210,6 +258,7 @@ void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &ve
     }
 }
 
+
 void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &origin){
     double min_x = std::numeric_limits<double>::max();
     double max_x = std::numeric_limits<double>::lowest();
@@ -248,6 +297,7 @@ void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &ext
     origin = Point_3(x, y, z);
 }
 
+
 Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y, unsigned int &z,
                                                        double &voxel_size, Point_3 origin){
     double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
@@ -255,6 +305,7 @@ Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsign
     double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
     return Point_3(centroid_x_coordinate, centroid_y_coordinate, centroid_z_coordinate);
 }
+
 
 Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
                                                        double &voxel_size, Point_3 origin){
@@ -267,12 +318,14 @@ Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
     return Bbox_3(x_min, y_min, z_min, x_max, y_max, z_max);
 }
 
+
 void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_size, Point_3 origin,
                                                     unsigned int &x, unsigned int &y, unsigned int &z){
     x = static_cast<unsigned int>(std::floor((pt.x() - origin.x()) / voxel_size));
     y = static_cast<unsigned int>(std::floor((pt.y() - origin.y()) / voxel_size));
     z = static_cast<unsigned int>(std::floor((pt.z() - origin.z()) / voxel_size));
 }
+
 
 void generateOBJ(VoxelGrid voxel_grid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value) {
     std::ofstream objFile(objFilePath);
@@ -300,6 +353,7 @@ void generateOBJ(VoxelGrid voxel_grid, const std::string& objFilePath, Point_3 o
 
     objFile.close();
 }
+
 
 void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid){
     for (const auto& entry : objects) {
