@@ -15,6 +15,7 @@
 #include <CGAL/intersections.h>
 #include <CGAL/Bbox_3.h>
 #include <CGAL/Surface_mesh.h>
+#include <set>
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel             Kernel;
 typedef Kernel::Point_3                                                 Point_3;
@@ -75,7 +76,7 @@ void construct_square(const Pwn& point, double side_length, std::vector<Point_3>
 void export_surfaces_as_OBJ(const std::vector<std::vector<Point_3>>& surface, const std::string& filename);
 void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size, Point_3 &origin,
                       std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms);
-void label_all_regions(VoxelGrid &voxel_grid, unsigned int first_label);
+unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label);
 void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume);
 
 int main() {
@@ -85,35 +86,28 @@ int main() {
     from_OBJ_to_Object(objects, vertices, input_file);
 
     std::map<std::string, int> extent;
-    double voxel_size = 0.5;
+    double voxel_size = 0.3;
     Point_3 origin; // This is the point which is located left below in the voxelgrid. It contains the real coordinates
     get_extents(vertices, extent, voxel_size, origin);
 
     VoxelGrid my_building_grid(extent["x_range_VoxelGrid"], extent["y_range_VoxelGrid"], extent["z_range_VoxelGrid"]);
     intersection(objects, voxel_size, origin, my_building_grid);
-    label_all_regions(my_building_grid, 2);
-
-    generateOBJ_from_VoxelGrid(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
-    generateOBJ_from_VoxelGrid(my_building_grid, "output_only_1.obj", origin, voxel_size, 1);
-    generateOBJ_from_VoxelGrid(my_building_grid, "output_only_2.obj", origin, voxel_size, 2);
+    unsigned int amount_of_rooms = label_all_regions(my_building_grid, 2);
 
     std::map<int, std::vector<std::vector<Point_3>>> surfaces_assigned;
-    unsigned int amount_of_rooms = 3;
     extract_surfcaes(my_building_grid, voxel_size, origin, surfaces_assigned, amount_of_rooms);
 
     for (const auto& entry : surfaces_assigned) {
         std::string filename = "surface_" + std::to_string(entry.first) + ".obj";
         export_surfaces_as_OBJ(entry.second, filename);
     }
-
     return 0;
 }
 
 void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size,  Point_3 &origin,
                       std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms){
     std::map<int, std::vector<Pwn>> boundary_points_assigned;
-    boundary_points_assigned[0] = std::vector<Pwn>();
-    for (int i = 3; i < (3 + amount_of_rooms); ++i) {
+    for (int i = 2; i < (2 + amount_of_rooms); ++i) {
         boundary_points_assigned[i] = std::vector<Pwn>();
     }
     unsigned int index_voxel = 0;
@@ -185,7 +179,6 @@ void export_surfaces_as_OBJ(const std::vector<std::vector<Point_3>>& surface, co
         outFile << std::endl;
     }
     outFile.close();
-    std::cout << "File " << filename << " exported successfully." << std::endl;
 }
 
 
@@ -241,7 +234,7 @@ void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double thresh
     }
 }
 
-void label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label) {
+unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label) {
     std::cout << "Labelling spaces" << "-------------------" << std::endl;
 
     unsigned int label_number = exterior_label;
@@ -254,6 +247,8 @@ void label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label) {
         }
     }
     std::cout << "-----------------------------------" << std::endl;
+    unsigned int amount_of_rooms = label_number - exterior_label;
+    return amount_of_rooms;
 }
 
 void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index) {
