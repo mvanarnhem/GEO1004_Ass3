@@ -14,14 +14,15 @@
 #include <cmath>
 #include <CGAL/intersections.h>
 #include <CGAL/Bbox_3.h>
-#include <set>
+#include <CGAL/Surface_mesh.h>
 
-
-
-typedef CGAL::Exact_predicates_inexact_constructions_kernel Kernel;
-typedef Kernel::Point_3                                     Point_3;
-typedef Kernel::Triangle_3                                  Triangle;
-typedef CGAL::Bbox_3                                        Bbox_3;
+typedef CGAL::Exact_predicates_inexact_constructions_kernel             Kernel;
+typedef Kernel::Point_3                                                 Point_3;
+typedef Kernel::Triangle_3                                              Triangle;
+typedef CGAL::Bbox_3                                                    Bbox_3;
+typedef Kernel::Vector_3                                                Vector_3;
+typedef std::pair<Point_3, Vector_3>                                    Pwn;
+typedef CGAL::Surface_mesh<Point_3>                                     Surface_mesh;
 
 
 struct Object {
@@ -67,11 +68,16 @@ Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
                          double &voxel_size, Point_3 origin);
 Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y,
                                                          unsigned int &z, double &voxel_size, Point_3 origin);
-void generateOBJ(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value);
+void generateOBJ_from_VoxelGrid(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value);
 void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid);
 void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index);
+void construct_square(const Pwn& point, double side_length, std::vector<Point_3>& vertices, std::vector<std::vector<int>>& faces);
+void export_surfaces_as_OBJ(const std::vector<std::vector<Point_3>>& surface, const std::string& filename);
+void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size, Point_3 &origin,
+                      std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms);
 void label_all_regions(VoxelGrid &voxel_grid, unsigned int first_label);
 void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume);
+
 int main() {
     const std::string input_file = "../data/output_small_house.obj";
     std::map<int, Object> objects;
@@ -84,23 +90,131 @@ int main() {
     get_extents(vertices, extent, voxel_size, origin);
 
     VoxelGrid my_building_grid(extent["x_range_VoxelGrid"], extent["y_range_VoxelGrid"], extent["z_range_VoxelGrid"]);
-
     intersection(objects, voxel_size, origin, my_building_grid);
-
     label_all_regions(my_building_grid, 2);
 
-    // fill fake rooms that are created between walls.
-    // unsure about the theshold_volume approach, and the problem only occurs at smaller voxels
-    // so for now we set the voxel_size back at 0.5 and not use the function at the moment
-    // fill_holes_in_wall(my_building_grid, voxel_size, 6.0);
+    generateOBJ_from_VoxelGrid(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
+    generateOBJ_from_VoxelGrid(my_building_grid, "output_only_1.obj", origin, voxel_size, 1);
+    generateOBJ_from_VoxelGrid(my_building_grid, "output_only_2.obj", origin, voxel_size, 2);
 
-    generateOBJ(my_building_grid, "output_only_0.obj", origin, voxel_size, 0);
-    generateOBJ(my_building_grid, "output_only_1.obj", origin, voxel_size, 1);
-    generateOBJ(my_building_grid, "output_only_2.obj", origin, voxel_size, 2);
-    generateOBJ(my_building_grid, "output_only_3.obj", origin, voxel_size, 3);
-    generateOBJ(my_building_grid, "output_only_4.obj", origin, voxel_size, 4);
+    std::map<int, std::vector<std::vector<Point_3>>> surfaces_assigned;
+    unsigned int amount_of_rooms = 3;
+    extract_surfcaes(my_building_grid, voxel_size, origin, surfaces_assigned, amount_of_rooms);
+
+    for (const auto& entry : surfaces_assigned) {
+        std::string filename = "surface_" + std::to_string(entry.first) + ".obj";
+        export_surfaces_as_OBJ(entry.second, filename);
+    }
 
     return 0;
+}
+
+void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size,  Point_3 &origin,
+                      std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms){
+    std::map<int, std::vector<Pwn>> boundary_points_assigned;
+    boundary_points_assigned[0] = std::vector<Pwn>();
+    for (int i = 3; i < (3 + amount_of_rooms); ++i) {
+        boundary_points_assigned[i] = std::vector<Pwn>();
+    }
+    unsigned int index_voxel = 0;
+    for (auto const &voxel: building_grid.voxels) {
+        unsigned int x = index_voxel % building_grid.max_x;
+        unsigned int y = (index_voxel / building_grid.max_x) % building_grid.max_y;
+        unsigned int z = index_voxel / (building_grid.max_x * building_grid.max_y);
+        if (voxel == 1) {
+            for (int dz = -1; dz <= 1; ++dz) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dx == 0 && dy == 0 && dz == 0)
+                            continue;
+                        if (abs(dx) + abs(dy) + abs(dz) != 1)
+                            continue;
+                        int nx = x + dx;
+                        int ny = y + dy;
+                        int nz = z + dz;
+                        Point_3 centre_point = translate_VoxelGridVoxel_to_RealWorldCoordinates(x, y, z, voxel_size, origin);
+                        if (building_grid(nx, ny, nz) != 1) {
+                            double x_boundary = centre_point.x() + 0.5 * voxel_size * dx;
+                            double y_boundary = centre_point.y() + 0.5 * voxel_size * dy;
+                            double z_boundary = centre_point.z() + 0.5 * voxel_size * dz;
+                            int neighbour_value = building_grid(nx, ny, nz);
+                            boundary_points_assigned[neighbour_value].emplace_back(std::make_pair(
+                                    Point_3(x_boundary, y_boundary, z_boundary),
+                                    Vector_3(-dx, -dy, -dz)));
+                        }
+                    }
+                }
+            }
+        }
+        index_voxel += 1;
+    }
+
+    for (const auto& entry : boundary_points_assigned) {
+        int key = entry.first;
+        const auto& points = entry.second;
+        std::vector<std::vector<Point_3>> current_surfaces;
+        for (const auto& pwn : points) {
+            std::vector<Point_3> vertices;
+            std::vector<std::vector<int>> faces;
+            construct_square(pwn, voxel_size, vertices, faces);
+            current_surfaces.push_back(vertices);
+        }
+        surfaces_assigned[key] = current_surfaces;
+    }
+}
+
+
+void export_surfaces_as_OBJ(const std::vector<std::vector<Point_3>>& surface, const std::string& filename) {
+    std::ofstream outFile(filename);
+    if (!outFile.is_open()) {
+        std::cerr << "Error: Unable to open file " << filename << " for writing." << std::endl;
+        return;
+    }
+    for (const auto& polygon : surface) {
+        for (const auto& vertex : polygon) {
+            outFile << "v " << vertex.x() << " " << vertex.y() << " " << vertex.z() << std::endl;
+        }
+    }
+    int offset = 1;
+    for (size_t i = 0; i < surface.size(); ++i) {
+        outFile << "f";
+        for (size_t j = 0; j < surface[i].size(); ++j) {
+            outFile << " " << j + offset;
+        }
+        offset += surface[i].size();
+        outFile << std::endl;
+    }
+    outFile.close();
+    std::cout << "File " << filename << " exported successfully." << std::endl;
+}
+
+
+Vector_3 orthogonal_vector(const Vector_3& v) {
+    if (abs(v.z()) == 1){
+        return Vector_3(0, -v.z(), v.y());
+    }
+    else {
+        return Vector_3(-v.y(), v.x(), 0);
+    }
+}
+
+void construct_square(const Pwn& point, double side_length, std::vector<Point_3>& vertices, std::vector<std::vector<int>>& faces) {
+    const Point_3& center = point.first;
+    const Vector_3& normal = point.second;
+    Vector_3 u = orthogonal_vector(normal);
+    Vector_3 v = CGAL::cross_product(normal, u);
+    double half_length = side_length / 2.0;
+    std::vector<Point_3> square_vertices;
+    square_vertices.push_back(center + half_length * u + half_length * v);
+    square_vertices.push_back(center + half_length * u - half_length * v);
+    square_vertices.push_back(center - half_length * u - half_length * v);
+    square_vertices.push_back(center - half_length * u + half_length * v);
+    for (const auto& vertex : square_vertices) {
+        vertices.push_back(vertex);
+    }
+    int offset = vertices.size() - square_vertices.size();
+    faces.push_back({offset, offset + 1, offset + 2});
+    faces.push_back({offset + 2, offset + 3, offset});
 }
 
 void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume) {
@@ -195,13 +309,12 @@ void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_ind
                 }
             }
         }
-    to_visit.erase(to_visit.begin());
-    ++voxels_labelled;
+        to_visit.erase(to_visit.begin());
+        ++voxels_labelled;
     }
     std::cout << "\tlabel: " << label << "\tstarting at:\t" <<
-    "(" << start_x << ", " << start_y << ", " << start_z << ")" << "\t room_size= " << voxels_labelled << " voxels" << std::endl;
+              "(" << start_x << ", " << start_y << ", " << start_z << ")" << "\t room_size= " << voxels_labelled << " voxels" << std::endl;
 }
-
 
 void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &vertices, const std::string &input_file){
     std::ifstream input_stream;
@@ -258,7 +371,6 @@ void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &ve
     }
 }
 
-
 void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &extent, double &voxel_size, Point_3 &origin){
     double min_x = std::numeric_limits<double>::max();
     double max_x = std::numeric_limits<double>::lowest();
@@ -297,7 +409,6 @@ void get_extents(std::vector<Point_3> &vertices, std::map<std::string, int> &ext
     origin = Point_3(x, y, z);
 }
 
-
 Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y, unsigned int &z,
                                                        double &voxel_size, Point_3 origin){
     double centroid_x_coordinate = origin.x() + (x + 0.5) * voxel_size;
@@ -305,7 +416,6 @@ Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsign
     double centroid_z_coordinate = origin.z() + (z + 0.5) * voxel_size;
     return Point_3(centroid_x_coordinate, centroid_y_coordinate, centroid_z_coordinate);
 }
-
 
 Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
                                                        double &voxel_size, Point_3 origin){
@@ -318,7 +428,6 @@ Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
     return Bbox_3(x_min, y_min, z_min, x_max, y_max, z_max);
 }
 
-
 void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_size, Point_3 origin,
                                                     unsigned int &x, unsigned int &y, unsigned int &z){
     x = static_cast<unsigned int>(std::floor((pt.x() - origin.x()) / voxel_size));
@@ -326,8 +435,7 @@ void translate_RealWorldCoordinates_to_VoxelGridVoxel(Point_3 pt, double &voxel_
     z = static_cast<unsigned int>(std::floor((pt.z() - origin.z()) / voxel_size));
 }
 
-
-void generateOBJ(VoxelGrid voxel_grid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value) {
+void generateOBJ_from_VoxelGrid(VoxelGrid voxel_grid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value) {
     std::ofstream objFile(objFilePath);
 
     if (!objFile.is_open()) {
@@ -353,7 +461,6 @@ void generateOBJ(VoxelGrid voxel_grid, const std::string& objFilePath, Point_3 o
 
     objFile.close();
 }
-
 
 void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid){
     for (const auto& entry : objects) {
