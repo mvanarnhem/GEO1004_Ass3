@@ -21,9 +21,9 @@ void wrong_groups_from_DefaultMaterial(const std::string &input_file, std::vecto
 void make_objects(const std::string &input_file, const std::vector<std::string> &groups_to_remove,
                    const std::vector<std::string> &usemtl_to_remove, std::map<int, Object> &objects,
                    std::vector<Point_3> &vertices);
-void exportToObj(const std::map<int, Object>& objects, std::ofstream& outFile);
+void exportToObj(const std::map<int, Object> &objects, const std::vector<Point_3> &vertices, std::ofstream &outFile);
 
-int main() {
+    int main() {
     const std::string input_file = "../data/output_wellness.obj";
 
     std::vector<std::string> remove_from_default;
@@ -47,13 +47,13 @@ int main() {
     std::map<int, Object> objects;
     std::vector<Point_3> vertices;
     make_objects(input_file, groups_to_remove, usemtl_to_remove, objects, vertices);
-    std::ofstream outFile("output_wellness_2.obj");
+    std::ofstream outFile("output_wellness_preStep.obj");
     if (outFile.is_open()) {
-        exportToObj(objects, outFile);
+        exportToObj(objects, vertices, outFile);
         outFile.close();
-        std::cout << "Objects saved to output.obj\n";
+        std::cout << "Objects saved to output_wellness_2.obj\n";
     } else {
-        std::cerr << "Unable to create output.obj\n";
+        std::cerr << "Unable to create output_wellness_2.obj\n";
     }
 
 }
@@ -132,29 +132,27 @@ void make_objects(const std::string &input_file, const std::vector<std::string> 
         }
 };
 
-void exportToObj(const std::map<int, Object>& objects, std::ofstream& outFile) {
+void exportToObj(const std::map<int, Object> &objects, const std::vector<Point_3> &vertices, std::ofstream &outFile) {
     std::map<Point_3, int> vertexIndices;
-    for (const auto& entry : objects) {
-        const Object& obj = entry.second;
-        outFile << "g " << obj.name << "\n";
-        for (const Triangle_3& triangle : obj.shells) {
-            for (int i = 0; i < 3; ++i) {
-                const Point_3& vertex = triangle.vertex(i);
-                auto it = vertexIndices.find(vertex);
-                if (it == vertexIndices.end()) {
-                    int index = vertexIndices.size() + 1;
-                    vertexIndices[vertex] = index;
-                    outFile << "v " << vertex.x() << " " << vertex.y() << " " << vertex.z() << "\n";
-                }
-            }
+    int currentIndex = 1;
+    outFile << "g all_parts" << "\n";
+    outFile << "usemtl all_parts" << "\n";
+    for (const auto &vertex : vertices) {
+        auto it = vertexIndices.find(vertex);
+        if (it == vertexIndices.end()) {
+            outFile << "v " << vertex.x() << " " << vertex.y() << " " << vertex.z() << "\n";
+            vertexIndices[vertex] = currentIndex++;
+        }
+    }
+    for (const auto &[id, obj] : objects) {
+        for (const auto &shell : obj.shells) {
             outFile << "f ";
             for (int i = 0; i < 3; ++i) {
-                const Point_3& vertex = triangle.vertex(i);
-                outFile << vertexIndices[vertex] << " ";
+                auto vertexIndex = vertexIndices.find(shell.vertex(i))->second;
+                outFile << vertexIndex << " ";
             }
             outFile << "\n";
         }
-        outFile << "usemtl " << obj.material_type << "\n";
     }
 }
 
