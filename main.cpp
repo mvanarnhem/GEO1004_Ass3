@@ -16,6 +16,9 @@
 #include <CGAL/Bbox_3.h>
 #include <CGAL/Surface_mesh.h>
 #include <set>
+#include "../include/json.hpp"
+
+using json = nlohmann::json;
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel             Kernel;
 typedef Kernel::Point_3                                                 Point_3;
@@ -25,6 +28,15 @@ typedef Kernel::Vector_3                                                Vector_3
 typedef std::pair<Point_3, Vector_3>                                    Pwn;
 typedef CGAL::Surface_mesh<Point_3>                                     Surface_mesh;
 
+struct Point_3_Compare {
+    bool operator()(const CGAL::Point_3<Kernel>& p1, const CGAL::Point_3<Kernel>& p2) const {
+        if (p1.x() != p2.x())
+            return p1.x() < p2.x();
+        if (p1.y() != p2.y())
+            return p1.y() < p2.y();
+        return p1.z() < p2.z();
+    }
+};
 
 struct Object {
     std::string name;
@@ -78,9 +90,13 @@ void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size, Point
                       std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms);
 unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label);
 void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume);
+void remove_parkingLots_from_Wellness(VoxelGrid &voxelgrid);
+void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, std::string outFile);
 
 int main() {
     const std::string input_file = "../data/output_small_house.obj";
+    bool process_wellness = false;
+
     std::map<int, Object> objects;
     std::vector<Point_3> vertices;
     from_OBJ_to_Object(objects, vertices, input_file);
@@ -94,14 +110,103 @@ int main() {
     intersection(objects, voxel_size, origin, my_building_grid);
     unsigned int amount_of_rooms = label_all_regions(my_building_grid, 2);
 
+    if (process_wellness){
+        remove_parkingLots_from_Wellness(my_building_grid);
+    }
+
     std::map<int, std::vector<std::vector<Point_3>>> surfaces_assigned;
     extract_surfcaes(my_building_grid, voxel_size, origin, surfaces_assigned, amount_of_rooms);
 
-    for (const auto& entry : surfaces_assigned) {
-        std::string filename = "surface_" + std::to_string(entry.first) + ".obj";
-        export_surfaces_as_OBJ(entry.second, filename);
-    }
+    exportToCitJSON(surfaces_assigned, "mybuilding.city.json");
+
     return 0;
+}
+
+Point_3 scale_point(Point_3 &vertex, json &j){
+    double x = (vertex.x() - j["transform"]["translate"][0].get<double>())/
+               (j["transform"]["scale"][0].get<double>());
+    double y = (vertex.y() - j["transform"]["translate"][1].get<double>())/
+               (j["transform"]["scale"][1].get<double>());
+    double z = (vertex.z() - j["transform"]["translate"][2].get<double>())/
+               (j["transform"]["scale"][2].get<double>());
+    return Point_3(x, y, z);
+}
+
+void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, std::string outFile){
+    nlohmann::json j;
+    j["type"] = "CityJSON";
+    j["version"] = "2.0";
+    j["transform"] = nlohmann::json::object();
+    j["transform"]["scale"] = nlohmann::json::array({1.0, 1.0, 1.0});
+    j["transform"]["translate"] = nlohmann::json::array({0.0, 0.0, 0.0});
+    j["CityObjects"] = nlohmann::json::object();
+    j["vertices"] = json::array();
+
+    for (const auto& entry : surfaces_assigned) {
+        json room_json = json::array();
+        int room_id = entry.first;
+        json face_json = json::array();
+        auto room_faces = entry.second;
+        for (auto &face: room_faces) {
+            face_json.clear();
+            for (auto &pt: face) {
+                Point_3 scaled_Point = scale_point(pt, j);
+                int foundIndex = -1;
+                for (size_t i = 0; i < j["vertices"].size(); ++i) {
+                    auto &vertex = j["vertices"][i];
+                    if (std::fabs(vertex[0].get<double>() - scaled_Point.x()) < 0.0001 &&
+                        std::fabs(vertex[1].get<double>() - scaled_Point.y()) < 0.0001 &&
+                        std::fabs(vertex[2].get<double>() - scaled_Point.z()) < 0.0001) {
+                        foundIndex = i;
+                        break;
+                    }
+                }
+                if (foundIndex == -1) {
+                    foundIndex = j["vertices"].size();
+                    j["vertices"].push_back({scaled_Point.x(), scaled_Point.y(), scaled_Point.z()});
+                }
+                face_json.push_back(foundIndex);
+            }
+            room_json.push_back(json::array({face_json}));
+        }
+
+        if (room_id == 2) {
+            j["CityObjects"]["ExteriorBuilding"]["type"]= "Building";
+            j["CityObjects"]["ExteriorBuilding"]["children"] = json::array();
+            j["CityObjects"]["ExteriorBuilding"]["geometry"] = json::array({
+                                                                                   {
+                                                                                           { "type", "MultiSurface"},
+                                                                                           { "lod", "2.0"},
+                                                                                           { "boundaries", room_json}
+                                                                                   }});
+        }
+
+        else { // not 2 means its a room
+            std::string room_name = "BuildingRoom";
+            room_name += std::to_string(room_id - 2);
+            j["CityObjects"]["ExteriorBuilding"]["children"].push_back(room_name);
+            j["CityObjects"][room_name]["parents"]=json::array({"ExteriorBuilding"});
+            j["CityObjects"][room_name]["type"]= "BuildingRoom";
+            j["CityObjects"][room_name]["geometry"] = json::array({
+                                                                          {
+                                                                                  { "type", "MultiSurface"},
+                                                                                  { "lod", "2.0"},
+                                                                                  { "boundaries", room_json}
+                                                                          }
+                                                                  });
+        }
+
+    }
+
+    std::string json_string = j.dump();
+    std::ofstream out_stream(outFile);
+    if (out_stream.is_open()) {
+        out_stream << json_string;
+        out_stream.close();
+        std::cout << "CityJSON file generated: mybuilding.city.json" << std::endl;
+    } else {
+        std::cerr << "Error: Unable to open file for writing." << std::endl;
+    }
 }
 
 void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size,  Point_3 &origin,
@@ -486,6 +591,70 @@ void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &o
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+void remove_parkingLots_from_Wellness(VoxelGrid &voxelgrid){
+    // First step: the red parts are removed, the parts that only contain 3 voxels assigned to 1 in every z-direction
+    for (unsigned int x_fixed = 0; x_fixed < voxelgrid.max_x; ++x_fixed) {
+        for (unsigned int y_fixed = 0; y_fixed < voxelgrid.max_y; ++y_fixed) {
+            unsigned int onesCount = 0;
+            bool includes_interior = false;
+            std::vector<unsigned int> walls_z_index;
+            for (unsigned int z = 0; z < voxelgrid.max_z; ++z) {
+                if (voxelgrid(x_fixed, y_fixed, z) == 1) {
+                    ++onesCount;
+                    walls_z_index.emplace_back(z);
+                }
+                else if (voxelgrid(x_fixed, y_fixed, z) > 2){
+                    includes_interior = true;
+                }
+            }
+            if (not includes_interior && onesCount <= 3) {
+                for (auto z: walls_z_index){
+                    voxelgrid(x_fixed, y_fixed, z) = 2;
+                }
+            }
+        }
+    }
+    // Second step: the yellow parts are removed, two voxels with value 1 in z-direction and with the lowest z-value
+    // that have a lot of exterior voxels above them.
+    for (unsigned int x_fixed = 0; x_fixed < voxelgrid.max_x; ++x_fixed) {
+        for (unsigned int y_fixed = 0; y_fixed < voxelgrid.max_y; ++y_fixed) {
+            std::vector<unsigned int> change_voxels_zIndex;
+            std::vector<unsigned int> previous_ones;
+            std::vector<unsigned int> keep_track_of_exterior;
+            bool not_crossed_interior = true;
+            bool removed_bottom = false;
+            for (unsigned int z = 0; z < voxelgrid.max_z; ++z) {
+                if (not removed_bottom) {
+                    if (voxelgrid(x_fixed, y_fixed, z) == 1) {
+                        if (keep_track_of_exterior.size() > 10 && not_crossed_interior) {
+                            change_voxels_zIndex.insert(change_voxels_zIndex.end(), previous_ones.begin(),
+                                                        previous_ones.end());
+                            previous_ones.clear();
+                            keep_track_of_exterior.clear();
+                            removed_bottom = true;
+                        }
+                        previous_ones.emplace_back(z);
+                    } else if (voxelgrid(x_fixed, y_fixed, z) == 2) {
+                        if (previous_ones.size() == 2) {
+                            keep_track_of_exterior.emplace_back(z);
+                        } else {
+                            previous_ones.clear();
+                            keep_track_of_exterior.clear();
+                        }
+                    } else {
+                        not_crossed_interior = false;
+                        previous_ones.clear();
+                        keep_track_of_exterior.clear();
+                    }
+                }
+            }
+            for (unsigned int z: change_voxels_zIndex) {
+                voxelgrid(x_fixed, y_fixed, z) = 2;
             }
         }
     }
