@@ -28,7 +28,6 @@ void exportToObj(const std::map<int, Object> &objects, const std::vector<Point_3
 
     std::vector<std::string> remove_from_default;
     // The following function will get the group names of the groups in Default which need to be removed
-    // See the picture I have send you
     wrong_groups_from_DefaultMaterial(input_file, remove_from_default);
 
     std::vector<std::string> remove_from_floor = {"product-1889ce11-0dd2-4ce2-9da4-88b9677a679a-body",
@@ -39,8 +38,6 @@ void exportToObj(const std::map<int, Object> &objects, const std::vector<Point_3
     groups_to_remove.insert(groups_to_remove.end(), remove_from_default.begin(), remove_from_default.end());
 
     std::vector<std::string> usemtl_to_remove = {"surface-style-652-asphalt,-bitumen", "IfcSlab", "IfcRailing",
-                                                 "IfcRamp", "IfcStairFlight", "IfcBuildingElementProxy",
-                                                 "IfcFurnishingElement", "IfcFlowTerminal",
                                                  "surface-style-75901-metal---stainless-steel",
                                                  "IfcMember"};
 
