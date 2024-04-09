@@ -7,14 +7,10 @@
 #include <CGAL/linear_least_squares_fitting_3.h>
 #include <CGAL/Constrained_triangulation_2.h>
 #include <cstdlib>
-#include <CGAL/Constrained_Delaunay_triangulation_2.h>
-#include <CGAL/Triangulation_vertex_base_2.h>
-#include <CGAL/Triangulation_face_base_with_info_2.h>
 #include <limits>
 #include <cmath>
 #include <CGAL/intersections.h>
 #include <CGAL/Bbox_3.h>
-#include <CGAL/Surface_mesh.h>
 #include <set>
 #include "../include/json.hpp"
 
@@ -26,17 +22,6 @@ typedef Kernel::Triangle_3                                              Triangle
 typedef CGAL::Bbox_3                                                    Bbox_3;
 typedef Kernel::Vector_3                                                Vector_3;
 typedef std::pair<Point_3, Vector_3>                                    Pwn;
-typedef CGAL::Surface_mesh<Point_3>                                     Surface_mesh;
-
-struct Point_3_Compare {
-    bool operator()(const CGAL::Point_3<Kernel>& p1, const CGAL::Point_3<Kernel>& p2) const {
-        if (p1.x() != p2.x())
-            return p1.x() < p2.x();
-        if (p1.y() != p2.y())
-            return p1.y() < p2.y();
-        return p1.z() < p2.z();
-    }
-};
 
 struct Object {
     std::string name;
@@ -81,21 +66,25 @@ Bbox_3 get_bbox_of_voxel(unsigned int &x, unsigned int &y, unsigned int &z,
                          double &voxel_size, Point_3 origin);
 Point_3 translate_VoxelGridVoxel_to_RealWorldCoordinates(unsigned int &x, unsigned int &y,
                                                          unsigned int &z, double &voxel_size, Point_3 origin);
-void generateOBJ_from_VoxelGrid(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value);
 void intersection(std::map<int, Object> &objects, double &voxel_size, Point_3 &origin, VoxelGrid &my_building_grid);
-void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index);
 void construct_square(const Pwn& point, double side_length, std::vector<Point_3>& vertices, std::vector<std::vector<int>>& faces);
-void export_surfaces_as_OBJ(const std::vector<std::vector<Point_3>>& surface, const std::string& filename);
 void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size, Point_3 &origin,
-                      std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms);
-unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label);
+                      std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms,
+                      std::vector<unsigned int> &small_rooms_to_remove);
+unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label, int threshold_AmountOfVoxels,
+                               std::vector<unsigned int> &small_rooms_to_remove);
 void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double threshold_volume);
 void remove_parkingLots_from_Wellness(VoxelGrid &voxelgrid);
 void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, std::string outFile);
 
+void generateOBJ_from_VoxelGrid(VoxelGrid voxelgrid, const std::string& objFilePath, Point_3 origin, double voxel_size, int value);
+void export_surfaces_as_OBJ(const std::vector<std::vector<Point_3>>& surface, const std::string& filename);
+
 int main() {
-    const std::string input_file = "../data/output_small_house.obj";
-    bool process_wellness = false;
+//    const std::string input_file = "../data/output_small_house.obj";
+    const std::string input_file = "output_wellness_preStep.obj";
+    bool process_wellness = true;
+    int threshold_AmountOfVoxels = 100;
 
     std::map<int, Object> objects;
     std::vector<Point_3> vertices;
@@ -108,14 +97,15 @@ int main() {
 
     VoxelGrid my_building_grid(extent["x_range_VoxelGrid"], extent["y_range_VoxelGrid"], extent["z_range_VoxelGrid"]);
     intersection(objects, voxel_size, origin, my_building_grid);
-    unsigned int amount_of_rooms = label_all_regions(my_building_grid, 2);
+    std::vector<unsigned int> small_rooms_to_remove;
+    unsigned int amount_of_rooms = label_all_regions(my_building_grid, 2, threshold_AmountOfVoxels, small_rooms_to_remove);
 
     if (process_wellness){
         remove_parkingLots_from_Wellness(my_building_grid);
     }
 
     std::map<int, std::vector<std::vector<Point_3>>> surfaces_assigned;
-    extract_surfcaes(my_building_grid, voxel_size, origin, surfaces_assigned, amount_of_rooms);
+    extract_surfcaes(my_building_grid, voxel_size, origin, surfaces_assigned, amount_of_rooms, small_rooms_to_remove);
 
     exportToCitJSON(surfaces_assigned, "mybuilding.city.json");
 
@@ -142,6 +132,7 @@ void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_
     j["CityObjects"] = nlohmann::json::object();
     j["vertices"] = json::array();
 
+    int room_number = 1;
     for (const auto& entry : surfaces_assigned) {
         json room_json = json::array();
         int room_id = entry.first;
@@ -183,7 +174,7 @@ void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_
 
         else { // not 2 means its a room
             std::string room_name = "BuildingRoom";
-            room_name += std::to_string(room_id - 2);
+            room_name += std::to_string(room_number);
             j["CityObjects"]["ExteriorBuilding"]["children"].push_back(room_name);
             j["CityObjects"][room_name]["parents"]=json::array({"ExteriorBuilding"});
             j["CityObjects"][room_name]["type"]= "BuildingRoom";
@@ -194,6 +185,7 @@ void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_
                                                                                   { "boundaries", room_json}
                                                                           }
                                                                   });
+            room_number += 1;
         }
 
     }
@@ -209,8 +201,9 @@ void exportToCitJSON(std::map<int, std::vector<std::vector<Point_3>>> &surfaces_
     }
 }
 
-void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size,  Point_3 &origin,
-                      std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms){
+void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size, Point_3 &origin,
+                      std::map<int, std::vector<std::vector<Point_3>>> &surfaces_assigned, unsigned int amount_of_rooms,
+                      std::vector<unsigned int> &small_rooms_to_remove){
     std::map<int, std::vector<Pwn>> boundary_points_assigned;
     for (int i = 2; i < (2 + amount_of_rooms); ++i) {
         boundary_points_assigned[i] = std::vector<Pwn>();
@@ -258,7 +251,10 @@ void extract_surfcaes(const VoxelGrid & building_grid, double &voxel_size,  Poin
             construct_square(pwn, voxel_size, vertices, faces);
             current_surfaces.push_back(vertices);
         }
-        surfaces_assigned[key] = current_surfaces;
+        auto it = std::find(small_rooms_to_remove.begin(), small_rooms_to_remove.end(), key);
+        if (it == small_rooms_to_remove.end()) {
+            surfaces_assigned[key] = current_surfaces;
+        }
     }
 }
 
@@ -339,24 +335,8 @@ void fill_holes_in_wall(VoxelGrid &voxel_grid, double &voxel_size, double thresh
     }
 }
 
-unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label) {
-    std::cout << "Labelling spaces" << "-------------------" << std::endl;
-
-    unsigned int label_number = exterior_label;
-
-    for (unsigned int i = 0; i < voxel_grid.voxels.size(); ++i) {
-        auto &voxel_value = voxel_grid.voxels[i];
-        if (voxel_value == 0) {
-            label_region(voxel_grid, label_number, i);
-            ++label_number;
-        }
-    }
-    std::cout << "-----------------------------------" << std::endl;
-    unsigned int amount_of_rooms = label_number - exterior_label;
-    return amount_of_rooms;
-}
-
-void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index) {
+void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_index, int threshold_AmountOfVoxels,
+                  std::vector<unsigned int> &small_rooms_to_remove) {
     // initialize the to_visit list of voxel indices we need to visit
     std::vector<int> to_visit;
 
@@ -412,8 +392,28 @@ void label_region(VoxelGrid &voxel_grid, unsigned int label, int start_voxel_ind
         to_visit.erase(to_visit.begin());
         ++voxels_labelled;
     }
-    std::cout << "\tlabel: " << label << "\tstarting at:\t" <<
-              "(" << start_x << ", " << start_y << ", " << start_z << ")" << "\t room_size= " << voxels_labelled << " voxels" << std::endl;
+//    std::cout << "\tlabel: " << label << "\tstarting at:\t" <<
+//              "(" << start_x << ", " << start_y << ", " << start_z << ")" << "\t room_size= " << voxels_labelled << " voxels" << std::endl;
+    if (voxels_labelled < threshold_AmountOfVoxels){
+        small_rooms_to_remove.emplace_back(label);
+    }
+}
+
+unsigned int label_all_regions(VoxelGrid &voxel_grid, unsigned int exterior_label, int threshold_AmountOfVoxels,
+                               std::vector<unsigned int> &small_rooms_to_remove) {
+//    std::cout << "Labelling spaces" << "-------------------" << std::endl;
+
+    unsigned int label_number = exterior_label;
+    for (unsigned int i = 0; i < voxel_grid.voxels.size(); ++i) {
+        auto &voxel_value = voxel_grid.voxels[i];
+        if (voxel_value == 0) {
+            label_region(voxel_grid, label_number, i, threshold_AmountOfVoxels, small_rooms_to_remove);
+            ++label_number;
+        }
+    }
+//    std::cout << "-----------------------------------" << std::endl;
+    unsigned int amount_of_rooms = label_number - exterior_label;
+    return amount_of_rooms;
 }
 
 void from_OBJ_to_Object(std::map<int, Object> &objects, std::vector<Point_3> &vertices, const std::string &input_file){
